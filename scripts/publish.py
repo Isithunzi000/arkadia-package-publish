@@ -257,8 +257,9 @@ def run(argv, env, fetcher, out, err):
                   f"(uruchom z --publish w GitHub Actions)", file=out)
             return 0
 
-        token = get_oidc_token(fetcher, env)
         for p, data, version in guarded:
+            # katalog odrzuca ponownie uzyty token OIDC (HTTP 422) - swiezy token per publikacja
+            token = get_oidc_token(fetcher, env)
             changelog = args.changelog or f"Wydanie {version}"
             body, ctype = build_multipart(
                 [("slug", p.slug), ("version", version), ("changelog", changelog)],

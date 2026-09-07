@@ -188,6 +188,29 @@ def check_api_state(detail, expected_version):
 
 
 # ---------------------------------------------------------------------------
+# Deklarowany sha256 katalogu
+# ---------------------------------------------------------------------------
+
+def check_declared_sha(detail, version, bundle_bytes):
+    """Katalog deklaruje w API sha256 serwowanego bundle'a plugin.js.
+
+    (package.zip serwowany jest bajtowo identyczny z naszym zipem, ale pole
+    versions[].sha256 nie jest skrotem zipa - jest skrotem skompilowanego
+    bundle'a; hipoteza potwierdzona audytem discovery, run 34171292539.)
+    """
+    declared = None
+    for v in detail.get("versions", []):
+        if v.get("version") == version:
+            declared = v.get("sha256")
+    if not declared:
+        return [f"katalog nie deklaruje sha256 dla wersji {version}"]
+    actual = hashlib.sha256(bundle_bytes).hexdigest()
+    if declared != actual:
+        return [f"sha256 bundle'a: katalog deklaruje {declared}, serwuje {actual}"]
+    return []
+
+
+# ---------------------------------------------------------------------------
 # Naglowki
 # ---------------------------------------------------------------------------
 
@@ -279,7 +302,10 @@ def verify_one(name, slug, index_entry, fetcher, out):
             pages_path.write_bytes(pages_resp.body)
             reg_fp = run_probe(str(reg_path))
             pages_fp = run_probe(str(pages_path))
-        report("bundle", compare_footprints(reg_fp, pages_fp))
+        problems = compare_footprints(reg_fp, pages_fp)
+        if detail is not None:
+            problems += check_declared_sha(detail, version, reg_resp.body)
+        report("bundle", problems)
         reg_norm = normalize_js(reg_resp.body.decode("utf-8", "replace"))
         pages_norm = normalize_js(pages_resp.body.decode("utf-8", "replace"))
         if reg_norm != pages_norm:

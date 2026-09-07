@@ -305,6 +305,26 @@ class TestRun(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("weryfikacja", err.lower())
 
+    def test_each_publish_uses_fresh_oidc_token(self):
+        # katalog odrzuca ponownie uzyty token OIDC (HTTP 422) - kazdy POST
+        # musi miec swiezy token (zweryfikowane w boju: run 34169691714)
+        f = FakeFetcher()
+        f.add(P.PAGES_INDEX, json.dumps(index_doc(ishtar_ver="1.8.23", truwer_ver="1.0.6")))
+        f.add(LIST_URL_ALL, json.dumps(registry_doc({
+            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.5"})))
+        f.add(P.RAW_ZIP_TEMPLATE.format(zip="ishtar_cal_1_8_23.zip"), make_zip("ishtar_cal", "1.8.23"))
+        f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_6.zip"), make_zip("truwer", "1.0.6"))
+        f.add(OIDC_FULL_URL, json.dumps({"value": "tok-1"}), json.dumps({"value": "tok-2"}))
+        f.add(P.REGISTRY + "/api/v1/plugins/ishtar-cal", json.dumps({"plugin": {"latestVersion": "1.8.23"}}))
+        f.add(P.REGISTRY + "/api/v1/plugins/truwer", json.dumps({"plugin": {"latestVersion": "1.0.6"}}))
+        rc, out, _ = self.run_script(["--publish"], OIDC_ENV, f)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(f.posts), 2)
+        self.assertEqual(f.posts[0][2]["Authorization"], "Bearer tok-1")
+        self.assertEqual(f.posts[1][2]["Authorization"], "Bearer tok-2")
+        oidc_calls = [u for u, _ in f.gets if "oidc" in u]
+        self.assertEqual(len(oidc_calls), 2)
+
     def test_selected_plugin_uses_single_slug_query(self):
         f = FakeFetcher()
         f.add(P.PAGES_INDEX, json.dumps(index_doc()))

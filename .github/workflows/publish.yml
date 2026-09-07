@@ -1,0 +1,57 @@
+# .github/workflows/publish.yml
+# Publikacja pluginow Dargoth do katalogu (arkadia-package-repository).
+# Wylacznie reczne uruchomienie: Actions -> Publish plugins -> Run workflow.
+name: Publish plugins
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: "Plugin do publikacji"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - imperium-cal
+          - ishtar-cal
+          - truwer
+      publish:
+        description: "false = tylko raport (dry-run), true = publikuj"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      changelog:
+        description: "Changelog publikacji (opcjonalnie, domyslnie 'Wydanie X.Y.Z')"
+        required: false
+        default: ""
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # wymagane, zeby GitHub wystawil token OIDC
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Testy
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Publish
+        env:
+          INPUT_PLUGIN: ${{ inputs.plugin }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          args=(--plugin "$INPUT_PLUGIN")
+          if [ "$INPUT_PUBLISH" = "true" ]; then args+=(--publish); fi
+          if [ -n "$INPUT_CHANGELOG" ]; then args+=(--changelog "$INPUT_CHANGELOG"); fi
+          python3 scripts/publish.py "${args[@]}"

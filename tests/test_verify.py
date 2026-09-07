@@ -95,7 +95,9 @@ class FakeFetcher:
 
 TRUWER_DETAIL = {
     "plugin": {"slug": "truwer", "latestVersion": "1.0.6", "trustedPublisher": True},
-    "versions": [{"version": "1.0.6", "sha256": "abc123", "yanked": False,
+    "versions": [{"version": "1.0.6",
+                  "sha256": hashlib.sha256(BASE_BUNDLE.encode("utf-8")).hexdigest(),
+                  "yanked": False,
                   "hasSources": True, "provenance": {"repositoryId": V.EXPECTED_REPO_ID}}],
     "install": {"packageUrl": V.REGISTRY + "/r/truwer/1.0.6/package.zip"},
 }
@@ -233,6 +235,28 @@ class TestApiState(unittest.TestCase):
         detail = json.loads(json.dumps(TRUWER_DETAIL))
         detail["plugin"]["trustedPublisher"] = False
         self.assertTrue(any("trustedPublisher" in p for p in V.check_api_state(detail, "1.0.6")))
+
+
+# ---------------------------------------------------------------------------
+# Deklarowany sha256 katalogu
+# ---------------------------------------------------------------------------
+
+class TestDeclaredSha(unittest.TestCase):
+    def test_ok(self):
+        blob = b"export async function init() {}\n"
+        detail = json.loads(json.dumps(TRUWER_DETAIL))
+        detail["versions"][0]["sha256"] = hashlib.sha256(blob).hexdigest()
+        self.assertEqual(V.check_declared_sha(detail, "1.0.6", blob), [])
+
+    def test_mismatch(self):
+        problems = V.check_declared_sha(TRUWER_DETAIL, "1.0.6", b"inne bajty")
+        self.assertTrue(any("sha256" in p for p in problems))
+
+    def test_missing_declared(self):
+        detail = json.loads(json.dumps(TRUWER_DETAIL))
+        del detail["versions"][0]["sha256"]
+        problems = V.check_declared_sha(detail, "1.0.6", b"x")
+        self.assertTrue(any("sha256" in p for p in problems))
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,14 @@
 # .github/workflows/publish.yml
 # Publikacja pluginow Dargoth do katalogu (arkadia-package-repository).
 # Wylacznie reczne uruchomienie: Actions -> Publish plugins -> Run workflow.
+# publish=true zawsze konczy sie audytem verify (twarda bramka).
 name: Publish plugins
 
 on:
   workflow_dispatch:
     inputs:
       plugin:
-        description: "Plugin do publikacji"
+        description: "Plugin do publikacji / audytu"
         required: true
         default: "all"
         type: choice
@@ -28,6 +29,14 @@ on:
         description: "Changelog publikacji (opcjonalnie, domyslnie 'Wydanie X.Y.Z')"
         required: false
         default: ""
+      verify:
+        description: "Audyt katalogu (przy publish=true wykonuje sie zawsze)"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   publish:
@@ -42,6 +51,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Testy
         run: python3 -m unittest discover -s tests -v
 
@@ -55,3 +68,19 @@ jobs:
           if [ "$INPUT_PUBLISH" = "true" ]; then args+=(--publish); fi
           if [ -n "$INPUT_CHANGELOG" ]; then args+=(--changelog "$INPUT_CHANGELOG"); fi
           python3 scripts/publish.py "${args[@]}"
+
+      - name: Verify (audyt katalogu)
+        env:
+          INPUT_PLUGIN: ${{ inputs.plugin }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_VERIFY: ${{ inputs.verify }}
+        run: |
+          if [ "$INPUT_PUBLISH" = "true" ]; then
+            echo "publish=true - audyt obowiazkowy (twarda bramka)"
+            sleep 10 # katalog moze chwile kompilowac bundle po publikacji
+            python3 scripts/verify.py --plugin "$INPUT_PLUGIN"
+          elif [ "$INPUT_VERIFY" = "true" ]; then
+            python3 scripts/verify.py --plugin "$INPUT_PLUGIN"
+          else
+            echo "verify pominiete (publish=false, verify=false)"
+          fi

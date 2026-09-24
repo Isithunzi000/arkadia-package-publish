@@ -30,7 +30,15 @@ globalThis.localStorage = globalThis.localStorage ?? {
   setItem: () => {},
   removeItem: () => {},
 };
-globalThis.navigator = globalThis.navigator ?? { userAgent: "verify-probe" };
+// Node >=21 ma wbudowany globalThis.navigator (getter-only) — definiujemy
+// atrape tylko, gdy go brak, przez defineProperty (przypisanie rzuca TypeError).
+if (typeof globalThis.navigator === "undefined") {
+  Object.defineProperty(globalThis, "navigator", {
+    value: { userAgent: "verify-probe" },
+    configurable: true,
+    writable: true,
+  });
+}
 
 // --- Uniwersalna atrapia PluginApi z rejestron wywolan ---
 

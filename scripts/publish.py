@@ -36,6 +36,7 @@ OIDC_AUDIENCE = "arkadia-plugins"
 PLUGINS = (
     ("imperium_cal", "imperium-cal"),
     ("ishtar_cal", "ishtar-cal"),
+    ("treningi", "treningi"),
     ("truwer", "truwer"),
 )
 

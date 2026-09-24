@@ -54,6 +54,7 @@ CLIENT_ORIGIN = "https://delwing.github.io"
 PLUGINS = (
     ("imperium_cal", "imperium-cal"),
     ("ishtar_cal", "ishtar-cal"),
+    ("treningi", "treningi"),
     ("truwer", "truwer"),
 )
 

@@ -16,6 +16,7 @@ on:
           - all
           - imperium-cal
           - ishtar-cal
+          - treningi
           - truwer
       publish:
         description: "false = tylko raport (dry-run), true = publikuj"

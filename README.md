@@ -8,6 +8,7 @@ Obsługiwane pluginy (źródła i release'y: [arkadia-dargoth-plugins](https://g
 |---|---|
 | Kalendarz Imperium | `imperium-cal` |
 | Kalendarz Ishtar | `ishtar-cal` |
+| Treningi | `treningi` |
 | Truwer | `truwer` |
 
 ## Jak to działa

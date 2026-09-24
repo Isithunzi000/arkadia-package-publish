@@ -21,9 +21,11 @@ from scripts import publish as P  # noqa: E402
 # Fixtury
 # ---------------------------------------------------------------------------
 
-def index_doc(truwer_ver="1.0.5", imperium_ver="1.8.23", ishtar_ver="1.8.22", skip=None):
+def index_doc(truwer_ver="1.0.5", imperium_ver="1.8.23", ishtar_ver="1.8.22",
+              treningi_ver="1.6.7", skip=None):
     plugins = []
-    for name, ver in (("imperium_cal", imperium_ver), ("ishtar_cal", ishtar_ver), ("truwer", truwer_ver)):
+    for name, ver in (("imperium_cal", imperium_ver), ("ishtar_cal", ishtar_ver),
+                      ("treningi", treningi_ver), ("truwer", truwer_ver)):
         if name == skip:
             continue
         z = f"{name}_{ver.replace('.', '_')}.zip"
@@ -82,7 +84,7 @@ class FakeFetcher:
         return b'{"ok": true}'
 
 
-LIST_URL_ALL = P.REGISTRY + "/api/v1/plugins?slugs=imperium-cal,ishtar-cal,truwer"
+LIST_URL_ALL = P.REGISTRY + "/api/v1/plugins?slugs=imperium-cal,ishtar-cal,treningi,truwer"
 OIDC_ENV = {
     "ACTIONS_ID_TOKEN_REQUEST_URL": "http://oidc.local/token?run=1",
     "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "req-tok",
@@ -135,15 +137,18 @@ class TestVersions(unittest.TestCase):
 class TestPlan(unittest.TestCase):
     def test_nothing_new_all_skip(self):
         plan = P.build_plan(index_doc(), registry_doc({
-            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.5"}))
-        self.assertEqual(len(plan), 3)
+            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+            "treningi": "1.6.7", "truwer": "1.0.5"}))
+        self.assertEqual(len(plan), 4)
         self.assertTrue(all(p.action == "skip" for p in plan))
 
     def test_one_new_version_only_that_publishes(self):
         plan = P.build_plan(index_doc(), registry_doc({
-            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.4"}))
+            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+            "treningi": "1.6.7", "truwer": "1.0.4"}))
         actions = {p.slug: p.action for p in plan}
-        self.assertEqual(actions, {"imperium-cal": "skip", "ishtar-cal": "skip", "truwer": "publish"})
+        self.assertEqual(actions, {"imperium-cal": "skip", "ishtar-cal": "skip",
+                                   "treningi": "skip", "truwer": "publish"})
         truwer = [p for p in plan if p.slug == "truwer"][0]
         self.assertEqual(truwer.version, "1.0.5")
         self.assertEqual(truwer.zip_name, "truwer_1_0_5.zip")
@@ -223,6 +228,38 @@ class TestMultipart(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Plugin treningi (4. plugin w wydawcy)
+# ---------------------------------------------------------------------------
+
+class TestTreningiPlugin(unittest.TestCase):
+    def test_treningi_in_publish_plugins_list(self):
+        self.assertIn(("treningi", "treningi"), P.PLUGINS)
+
+    def test_treningi_in_verify_plugins_list(self):
+        from scripts import verify as V
+        self.assertIn(("treningi", "treningi"), V.PLUGINS)
+
+    def test_parse_args_accepts_treningi(self):
+        args = P.parse_args(["--plugin", "treningi"])
+        self.assertEqual(args.plugin, "treningi")
+
+    def test_plan_includes_treningi(self):
+        plan = P.build_plan(index_doc(), registry_doc({
+            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+            "treningi": "1.6.7", "truwer": "1.0.5"}))
+        self.assertEqual([p.slug for p in plan],
+                         ["imperium-cal", "ishtar-cal", "treningi", "truwer"])
+
+    def test_treningi_missing_in_registry_means_publish(self):
+        plan = P.build_plan(index_doc(), registry_doc({
+            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.5"}))
+        treningi = [p for p in plan if p.slug == "treningi"][0]
+        self.assertEqual(treningi.action, "publish")
+        self.assertIsNone(treningi.registry_version)
+        self.assertEqual(treningi.zip_name, "treningi_1_6_7.zip")
+
+
+# ---------------------------------------------------------------------------
 # Przeplyw run() end-to-end na atraph HTTP
 # ---------------------------------------------------------------------------
 
@@ -233,7 +270,8 @@ class TestRun(unittest.TestCase):
         return rc, out.getvalue(), err.getvalue()
 
     def test_dry_run_reports_and_sends_nothing(self):
-        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.4"})
+        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+                               "treningi": "1.6.7", "truwer": "1.0.4"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5"))
         rc, out, _ = self.run_script([], {}, f)
         self.assertEqual(rc, 0)
@@ -243,7 +281,8 @@ class TestRun(unittest.TestCase):
         self.assertFalse(any("oidc" in u for u in urls), "bez --publish nie pobieramy tokenu OIDC")
 
     def test_no_new_versions_is_clean_noop(self):
-        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.5"})
+        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+                               "treningi": "1.6.7", "truwer": "1.0.5"})
         rc, out, _ = self.run_script(["--publish"], OIDC_ENV, f)
         self.assertEqual(rc, 0)
         self.assertIn("Brak nowych wersji", out)
@@ -252,7 +291,8 @@ class TestRun(unittest.TestCase):
         self.assertFalse(any("oidc" in u for u in urls), "bez nowych wersji nie pobieramy tokenu OIDC")
 
     def test_publish_blocked_outside_actions(self):
-        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.4"})
+        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+                               "treningi": "1.6.7", "truwer": "1.0.4"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5"))
         rc, _, err = self.run_script(["--publish"], {}, f)
         self.assertEqual(rc, 1)
@@ -260,7 +300,8 @@ class TestRun(unittest.TestCase):
         self.assertEqual(f.posts, [])
 
     def test_full_publish_flow(self):
-        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.4"})
+        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+                               "treningi": "1.6.7", "truwer": "1.0.4"})
         zip_data = make_zip("truwer", "1.0.5")
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), zip_data)
         f.add(OIDC_FULL_URL, json.dumps({"value": "tok-123"}))
@@ -280,7 +321,8 @@ class TestRun(unittest.TestCase):
         self.assertIn(zip_data, body)
 
     def test_custom_changelog(self):
-        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.4"})
+        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+                               "treningi": "1.6.7", "truwer": "1.0.4"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5"))
         f.add(OIDC_FULL_URL, json.dumps({"value": "tok-123"}))
         f.add(P.REGISTRY + "/api/v1/plugins/truwer", json.dumps({"plugin": {"latestVersion": "1.0.5"}}))
@@ -289,14 +331,16 @@ class TestRun(unittest.TestCase):
         self.assertIn("Poprawki naglowka".encode("utf-8"), f.posts[0][1])
 
     def test_guard_failure_aborts_before_any_post(self):
-        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.4"})
+        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+                               "treningi": "1.6.7", "truwer": "1.0.4"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5", ts_ver="1.0.4"))
         rc, _, err = self.run_script(["--publish"], OIDC_ENV, f)
         self.assertEqual(rc, 1)
         self.assertEqual(f.posts, [])
 
     def test_registry_verify_after_publish_must_match(self):
-        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.4"})
+        f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+                               "treningi": "1.6.7", "truwer": "1.0.4"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5"))
         f.add(OIDC_FULL_URL, json.dumps({"value": "tok-123"}))
         # katalog po publikacji nadal pokazuje stara wersje -> blad
@@ -311,7 +355,8 @@ class TestRun(unittest.TestCase):
         f = FakeFetcher()
         f.add(P.PAGES_INDEX, json.dumps(index_doc(ishtar_ver="1.8.23", truwer_ver="1.0.6")))
         f.add(LIST_URL_ALL, json.dumps(registry_doc({
-            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.5"})))
+            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+            "treningi": "1.6.7", "truwer": "1.0.5"})))
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="ishtar_cal_1_8_23.zip"), make_zip("ishtar_cal", "1.8.23"))
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_6.zip"), make_zip("truwer", "1.0.6"))
         f.add(OIDC_FULL_URL, json.dumps({"value": "tok-1"}), json.dumps({"value": "tok-2"}))

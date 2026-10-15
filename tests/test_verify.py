@@ -339,3 +339,70 @@ class TestFlow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Wersja oczekujaca na publikacje (Pages wyprzedza katalog)
+# ---------------------------------------------------------------------------
+
+PENDING_DETAIL = {
+    "plugin": {"slug": "truwer", "latestVersion": "1.0.6", "trustedPublisher": True},
+    "versions": [{"version": "1.0.6",
+                  "sha256": hashlib.sha256(BASE_BUNDLE.encode("utf-8")).hexdigest(),
+                  "yanked": False,
+                  "hasSources": True, "provenance": {"repositoryId": V.EXPECTED_REPO_ID}}],
+    "install": {"packageUrl": V.REGISTRY + "/r/truwer/1.0.6/package.zip"},
+}
+
+
+def make_pending_fetcher(latest_bundle=None, detail=None):
+    """Pages deklaruje 1.0.7, katalog ma jeszcze 1.0.6 (nieopublikowana wersja).
+
+    Brak jakichkolwiek tras dla 1.0.7 - gdyby verify je pobral, FakeFetcher rzuci.
+    """
+    f = FakeFetcher()
+    f.add(V.PAGES_INDEX, json.dumps({"plugins": [
+        {"name": "truwer", "zip": "truwer_1_0_7.zip", "file": "truwer.js"}]}))
+    f.add(V.REGISTRY + "/api/v1/plugins/truwer", json.dumps(
+        detail if detail is not None else PENDING_DETAIL))
+    f.add(V.REGISTRY + "/r/truwer/1.0.6/plugin.js", BASE_BUNDLE, JS_HEADERS)
+    f.add(V.REGISTRY + "/r/truwer/latest/plugin.js",
+          latest_bundle if latest_bundle is not None else BASE_BUNDLE, JS_HEADERS)
+    return f
+
+
+class TestPendingPublication(unittest.TestCase):
+    def test_pending_is_not_failure(self):
+        f = make_pending_fetcher()
+        rc, out, _ = run_verify(["--plugin", "truwer"], f)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[PENDING] api", out)
+        self.assertIn("[SKIP] package", out)
+        self.assertIn("[SKIP] bundle", out)
+        self.assertIn("[OK] latest", out)
+        self.assertIn("[OK] naglowki", out)
+        self.assertIn("WYNIK: OK", out)
+
+    def test_pending_audits_live_catalog(self):
+        # pending nie wylacza audytu zywego katalogu: latest != przypieta(latest)
+        f = make_pending_fetcher(latest_bundle=BASE_BUNDLE + "// stara wersja\n")
+        rc, out, _ = run_verify(["--plugin", "truwer"], f)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("[FAIL] latest", out)
+
+    def test_pending_untrusted_publisher_fails(self):
+        detail = json.loads(json.dumps(PENDING_DETAIL))
+        detail["plugin"]["trustedPublisher"] = False
+        f = make_pending_fetcher(detail=detail)
+        rc, out, _ = run_verify(["--plugin", "truwer"], f)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("trustedPublisher", out)
+
+    def test_regression_fails(self):
+        # katalog NOWSZY niz Pages = regresja, nie pending - twarde FAIL
+        detail = json.loads(json.dumps(PENDING_DETAIL))
+        detail["plugin"]["latestVersion"] = "1.0.7"
+        f = make_pending_fetcher(detail=detail)
+        rc, out, _ = run_verify(["--plugin", "truwer"], f)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("[FAIL] api", out)

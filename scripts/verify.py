@@ -18,6 +18,13 @@ Dla kazdego pluginu (zrodlo prawdy: index.json na GitHub Pages):
 Skrypt jest wylacznie odczytowy: zero POST-ow, zero tokenu OIDC.
 Kod wyjscia 0 tylko gdy wszystkie twarde kontrole przechodza.
 
+Stan pending: gdy index.json na Pages deklaruje wersje NOWSZA niz
+latestVersion katalogu, wersja czeka na publikacje — kroki A (czesciowo:
+latestVersion/brak wersji jako [PENDING]), B i C schodza na [SKIP] zamiast
+[FAIL], a D/E audytuja zywy katalog na jego aktualnej latestVersion.
+Drift (katalog starszy w inny sposob, rowne wersje rozniace sie trescia,
+katalog nowszy niz Pages) pozostaje twardym FAIL.
+
 Uzycie:
   python3 scripts/verify.py [--plugin all|imperium-cal|ishtar-cal|truwer]
 """
@@ -98,6 +105,14 @@ def parse_zip_name(zip_name):
     if not m:
         raise VerifyError(f"nieoczekiwana nazwa zip: {zip_name!r}")
     return m.group(1), ".".join(m.group(2, 3, 4))
+
+
+def version_key(version):
+    """Klucz porzadkujacy wersji X.Y.Z; None gdy nieporownywalna."""
+    try:
+        return tuple(int(p) for p in str(version).split("."))
+    except (ValueError, AttributeError):
+        return None
 
 
 def zip_entry_hashes(zip_bytes):
@@ -260,10 +275,34 @@ def verify_one(name, slug, index_entry, fetcher, out):
 
     # A) stan API
     detail = None
+    pending = False   # wersja z Pages wyprzedza katalog = oczekuje na publikacje
+    catalog_latest = None
     try:
         raw = fetcher.get(f"{REGISTRY}/api/v1/plugins/{slug}")
         detail = json.loads(raw.body.decode("utf-8"))
-        report("api", check_api_state(detail, version))
+        catalog_latest = (detail.get("plugin") or {}).get("latestVersion")
+        lk, ek = version_key(catalog_latest), version_key(version)
+        pending = (
+            catalog_latest != version
+            and lk is not None and ek is not None and lk < ek
+        )
+        api_problems = check_api_state(detail, version)
+        if pending:
+            # brak nowej wersji w katalogu to stan oczekujacy, nie drift:
+            # [PENDING] zamiast [FAIL]; twarde pozostaja pozostale kontrole API
+            pending_notes = [
+                p for p in api_problems
+                if p.startswith("latestVersion") or p.startswith("brak wersji")
+            ]
+            api_problems = [
+                p for p in api_problems
+                if not (p.startswith("latestVersion") or p.startswith("brak wersji"))
+            ]
+            if pending_notes:
+                print("[PENDING] api", file=out)
+                for p in pending_notes:
+                    print(f"  - {p} (oczekuje na publikacje)", file=out)
+        report("api", api_problems)
     except (VerifyError, json.JSONDecodeError) as e:
         report("api", [f"odczyt API: {e}"])
 
@@ -273,53 +312,64 @@ def verify_one(name, slug, index_entry, fetcher, out):
     latest_url = f"{REGISTRY}/r/{slug}/latest/plugin.js"
 
     # B) package.zip vs zip z repo
-    pkg_resp = None
-    try:
-        our_zip = fetcher.get(RAW_ZIP_TEMPLATE.format(zip=zip_name)).body
-        pkg_resp = fetcher.get(package_url)
-        report("package", compare_packages(our_zip, pkg_resp.body))
-        declared = None
-        for v in (detail or {}).get("versions", []):
-            if v.get("version") == version:
-                declared = v.get("sha256")
-        print(
-            f"[info] sha256: katalog_deklaruje={declared} "
-            f"nasz_zip={hashlib.sha256(our_zip).hexdigest()[:16]}... "
-            f"pakiet_katalogu={hashlib.sha256(pkg_resp.body).hexdigest()[:16]}...",
-            file=out,
-        )
-    except VerifyError as e:
-        report("package", [str(e)])
-
     # C) bundle: sonda importowa + znormalizowany diff (raportowy)
+    # W stanie pending obie sa bez sensu (wersja nieopublikowana = brak jej w katalogu),
+    # zostaje natomiast audyt zywego katalogu na jego aktualnej latestVersion (D/E).
+    pkg_resp = None
     reg_resp = None
-    try:
-        reg_resp = fetcher.get(pinned_url, headers={"Origin": CLIENT_ORIGIN})
-        pages_resp = fetcher.get(PAGES_BUNDLE.format(name=name))
-        with tempfile.TemporaryDirectory(prefix="verify-") as tmp:
-            reg_path = Path(tmp) / "registry.js"
-            pages_path = Path(tmp) / "pages.js"
-            reg_path.write_bytes(reg_resp.body)
-            pages_path.write_bytes(pages_resp.body)
-            reg_fp = run_probe(str(reg_path))
-            pages_fp = run_probe(str(pages_path))
-        problems = compare_footprints(reg_fp, pages_fp)
-        if detail is not None:
-            problems += check_declared_sha(detail, version, reg_resp.body)
-        report("bundle", problems)
-        reg_norm = normalize_js(reg_resp.body.decode("utf-8", "replace"))
-        pages_norm = normalize_js(pages_resp.body.decode("utf-8", "replace"))
-        if reg_norm != pages_norm:
-            import difflib
-            diff = list(difflib.unified_diff(
-                pages_norm.splitlines(), reg_norm.splitlines(),
-                fromfile="pages", tofile="katalog", lineterm="",
-            ))
-            print(f"[info] bundle: znormalizowany diff ma {len(diff)} linii (raportowy)", file=out)
-            for line in diff[:40]:
-                print(f"  {line}", file=out)
-    except VerifyError as e:
-        report("bundle", [str(e)])
+    if pending:
+        print("[SKIP] package (wersja nieopublikowana)", file=out)
+        print("[SKIP] bundle (wersja nieopublikowana)", file=out)
+        try:
+            audit_url = f"{REGISTRY}/r/{slug}/{catalog_latest}/plugin.js"
+            reg_resp = fetcher.get(audit_url, headers={"Origin": CLIENT_ORIGIN})
+        except VerifyError as e:
+            report("latest", [f"odczyt przypietej wersji katalogu {catalog_latest}: {e}"])
+    else:
+        try:
+            our_zip = fetcher.get(RAW_ZIP_TEMPLATE.format(zip=zip_name)).body
+            pkg_resp = fetcher.get(package_url)
+            report("package", compare_packages(our_zip, pkg_resp.body))
+            declared = None
+            for v in (detail or {}).get("versions", []):
+                if v.get("version") == version:
+                    declared = v.get("sha256")
+            print(
+                f"[info] sha256: katalog_deklaruje={declared} "
+                f"nasz_zip={hashlib.sha256(our_zip).hexdigest()[:16]}... "
+                f"pakiet_katalogu={hashlib.sha256(pkg_resp.body).hexdigest()[:16]}...",
+                file=out,
+            )
+        except VerifyError as e:
+            report("package", [str(e)])
+
+        try:
+            reg_resp = fetcher.get(pinned_url, headers={"Origin": CLIENT_ORIGIN})
+            pages_resp = fetcher.get(PAGES_BUNDLE.format(name=name))
+            with tempfile.TemporaryDirectory(prefix="verify-") as tmp:
+                reg_path = Path(tmp) / "registry.js"
+                pages_path = Path(tmp) / "pages.js"
+                reg_path.write_bytes(reg_resp.body)
+                pages_path.write_bytes(pages_resp.body)
+                reg_fp = run_probe(str(reg_path))
+                pages_fp = run_probe(str(pages_path))
+            problems = compare_footprints(reg_fp, pages_fp)
+            if detail is not None:
+                problems += check_declared_sha(detail, version, reg_resp.body)
+            report("bundle", problems)
+            reg_norm = normalize_js(reg_resp.body.decode("utf-8", "replace"))
+            pages_norm = normalize_js(pages_resp.body.decode("utf-8", "replace"))
+            if reg_norm != pages_norm:
+                import difflib
+                diff = list(difflib.unified_diff(
+                    pages_norm.splitlines(), reg_norm.splitlines(),
+                    fromfile="pages", tofile="katalog", lineterm="",
+                ))
+                print(f"[info] bundle: znormalizowany diff ma {len(diff)} linii (raportowy)", file=out)
+                for line in diff[:40]:
+                    print(f"  {line}", file=out)
+        except VerifyError as e:
+            report("bundle", [str(e)])
 
     # D) latest == przypieta wersja (bajtowo)
     try:

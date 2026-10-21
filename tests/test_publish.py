@@ -39,6 +39,20 @@ def registry_doc(slugs):
     return {"items": items}
 
 
+def arkmail_index_doc(arkmail_ver="1.12.2"):
+    """Index Pages repo arkmail (osobne zrodlo prawdy o wydaniach ArkMail)."""
+    z = f"arkmail_{arkmail_ver.replace('.', '_')}.zip"
+    return {"built": "2026-10-21T00:00:00.000Z", "plugins": [
+        {"name": "arkmail", "zip": z, "file": "arkmail.js", "kb": "148.0"}]}
+
+
+def merged_index_doc(**kw):
+    """Scalony index, jaki run() przekazuje build_plan: glowny + arkmail."""
+    doc = index_doc(**kw)
+    doc["plugins"] = doc["plugins"] + arkmail_index_doc()["plugins"]
+    return doc
+
+
 def make_zip(name, zip_ver, ts_ver=None, json_ver=None, double_ts=False, no_json=False):
     ts_ver = zip_ver if ts_ver is None else ts_ver
     json_ver = zip_ver if json_ver is None else json_ver
@@ -84,7 +98,7 @@ class FakeFetcher:
         return b'{"ok": true}'
 
 
-LIST_URL_ALL = P.REGISTRY + "/api/v1/plugins?slugs=imperium-cal,ishtar-cal,treningi,truwer"
+LIST_URL_ALL = P.REGISTRY + "/api/v1/plugins?slugs=imperium-cal,ishtar-cal,treningi,truwer,arkmail"
 OIDC_ENV = {
     "ACTIONS_ID_TOKEN_REQUEST_URL": "http://oidc.local/token?run=1",
     "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "req-tok",
@@ -93,9 +107,10 @@ OIDC_FULL_URL = "http://oidc.local/token?run=1&audience=arkadia-plugins"
 
 
 def make_flow_fetcher(registry_slugs):
-    """Fetcher z pelna trasa: index, lista katalogu, zip, OIDC, detail."""
+    """Fetcher z pelna trasa: indexy (glowny + arkmail), lista katalogu, zip, OIDC, detail."""
     f = FakeFetcher()
     f.add(P.PAGES_INDEX, json.dumps(index_doc()))
+    f.add(P.ARKMAIL_PAGES_INDEX, json.dumps(arkmail_index_doc()))
     f.add(LIST_URL_ALL, json.dumps(registry_doc(registry_slugs)))
     return f
 
@@ -136,48 +151,49 @@ class TestVersions(unittest.TestCase):
 
 class TestPlan(unittest.TestCase):
     def test_nothing_new_all_skip(self):
-        plan = P.build_plan(index_doc(), registry_doc({
+        plan = P.build_plan(merged_index_doc(), registry_doc({
             "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-            "treningi": "1.6.7", "truwer": "1.0.5"}))
-        self.assertEqual(len(plan), 4)
+            "treningi": "1.6.7", "truwer": "1.0.5", "arkmail": "1.12.2"}))
+        self.assertEqual(len(plan), 5)
         self.assertTrue(all(p.action == "skip" for p in plan))
 
     def test_one_new_version_only_that_publishes(self):
-        plan = P.build_plan(index_doc(), registry_doc({
+        plan = P.build_plan(merged_index_doc(), registry_doc({
             "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-            "treningi": "1.6.7", "truwer": "1.0.4"}))
+            "treningi": "1.6.7", "truwer": "1.0.4", "arkmail": "1.12.2"}))
         actions = {p.slug: p.action for p in plan}
         self.assertEqual(actions, {"imperium-cal": "skip", "ishtar-cal": "skip",
-                                   "treningi": "skip", "truwer": "publish"})
+                                   "treningi": "skip", "truwer": "publish",
+                                   "arkmail": "skip"})
         truwer = [p for p in plan if p.slug == "truwer"][0]
         self.assertEqual(truwer.version, "1.0.5")
         self.assertEqual(truwer.zip_name, "truwer_1_0_5.zip")
         self.assertEqual(truwer.registry_version, "1.0.4")
 
     def test_registry_missing_slug_means_publish(self):
-        plan = P.build_plan(index_doc(), registry_doc({
+        plan = P.build_plan(merged_index_doc(), registry_doc({
             "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22"}))
         truwer = [p for p in plan if p.slug == "truwer"][0]
         self.assertEqual(truwer.action, "publish")
         self.assertIsNone(truwer.registry_version)
 
     def test_registry_newer_means_skip(self):
-        plan = P.build_plan(index_doc(), registry_doc({
+        plan = P.build_plan(merged_index_doc(), registry_doc({
             "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "9.9.9"}))
         truwer = [p for p in plan if p.slug == "truwer"][0]
         self.assertEqual(truwer.action, "skip")
 
     def test_missing_plugin_in_index_is_error(self):
         with self.assertRaises(P.PublishError):
-            P.build_plan(index_doc(skip="truwer"), registry_doc({"truwer": "1.0.5"}))
+            P.build_plan(merged_index_doc(skip="truwer"), registry_doc({"truwer": "1.0.5"}))
 
     def test_selected_plugin_limits_plan(self):
-        plan = P.build_plan(index_doc(), registry_doc({"truwer": "1.0.4"}), selected={"truwer"})
+        plan = P.build_plan(merged_index_doc(), registry_doc({"truwer": "1.0.4"}), selected={"truwer"})
         self.assertEqual([p.slug for p in plan], ["truwer"])
 
     def test_selected_unknown_slug_is_error(self):
         with self.assertRaises(P.PublishError):
-            P.build_plan(index_doc(), registry_doc({}), selected={"nie-ma-takiego"})
+            P.build_plan(merged_index_doc(), registry_doc({}), selected={"nie-ma-takiego"})
 
 
 # ---------------------------------------------------------------------------
@@ -244,19 +260,65 @@ class TestTreningiPlugin(unittest.TestCase):
         self.assertEqual(args.plugin, "treningi")
 
     def test_plan_includes_treningi(self):
-        plan = P.build_plan(index_doc(), registry_doc({
+        plan = P.build_plan(merged_index_doc(), registry_doc({
             "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-            "treningi": "1.6.7", "truwer": "1.0.5"}))
+            "treningi": "1.6.7", "truwer": "1.0.5", "arkmail": "1.12.2"}))
         self.assertEqual([p.slug for p in plan],
-                         ["imperium-cal", "ishtar-cal", "treningi", "truwer"])
+                         ["imperium-cal", "ishtar-cal", "treningi", "truwer", "arkmail"])
 
     def test_treningi_missing_in_registry_means_publish(self):
-        plan = P.build_plan(index_doc(), registry_doc({
+        plan = P.build_plan(merged_index_doc(), registry_doc({
             "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22", "truwer": "1.0.5"}))
         treningi = [p for p in plan if p.slug == "treningi"][0]
         self.assertEqual(treningi.action, "publish")
         self.assertIsNone(treningi.registry_version)
         self.assertEqual(treningi.zip_name, "treningi_1_6_7.zip")
+
+
+# ---------------------------------------------------------------------------
+# Plugin arkmail (5. plugin w wydawcy; osobne repo i Pages, zip z release)
+# ---------------------------------------------------------------------------
+
+class TestArkmailPlugin(unittest.TestCase):
+    def test_arkmail_in_publish_plugins_list(self):
+        self.assertIn(("arkmail", "arkmail"), P.PLUGINS)
+
+    def test_arkmail_in_verify_plugins_list(self):
+        from scripts import verify as V
+        self.assertIn(("arkmail", "arkmail"), V.PLUGINS)
+
+    def test_parse_args_accepts_arkmail(self):
+        args = P.parse_args(["--plugin", "arkmail"])
+        self.assertEqual(args.plugin, "arkmail")
+
+    def test_plan_includes_arkmail_as_last(self):
+        plan = P.build_plan(merged_index_doc(), registry_doc({
+            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+            "treningi": "1.6.7", "truwer": "1.0.5", "arkmail": "1.12.2"}))
+        self.assertEqual([p.slug for p in plan],
+                         ["imperium-cal", "ishtar-cal", "treningi", "truwer", "arkmail"])
+
+    def test_arkmail_missing_in_registry_means_publish(self):
+        plan = P.build_plan(merged_index_doc(), registry_doc({
+            "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
+            "treningi": "1.6.7", "truwer": "1.0.5"}))
+        arkmail = [p for p in plan if p.slug == "arkmail"][0]
+        self.assertEqual(arkmail.action, "publish")
+        self.assertIsNone(arkmail.registry_version)
+        self.assertEqual(arkmail.zip_name, "arkmail_1_12_2.zip")
+
+    def test_arkmail_zip_url_uses_release_asset(self):
+        # zip arkmail NIE lezy w arkadia-dargoth-plugins/releases - pobieramy
+        # go z asseta GitHub Release repo arkadia-dargoth-arkmail (publiczny
+        # URL po upublicznieniu repo; katalog i tak wymaga publicznego zipa).
+        self.assertEqual(
+            P.zip_url("arkmail", "arkmail_1_12_2.zip", "1.12.2"),
+            "https://github.com/Isithunzi000/arkadia-dargoth-arkmail"
+            "/releases/download/v1.12.2/arkmail_1_12_2.zip")
+        # pozostale pluginy dalej z releases repo arkadia-dargoth-plugins
+        self.assertEqual(
+            P.zip_url("truwer", "truwer_1_0_5.zip", "1.0.5"),
+            P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"))
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +333,8 @@ class TestRun(unittest.TestCase):
 
     def test_dry_run_reports_and_sends_nothing(self):
         f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-                               "treningi": "1.6.7", "truwer": "1.0.4"})
+                               "treningi": "1.6.7", "truwer": "1.0.4",
+                               "arkmail": "1.12.2"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5"))
         rc, out, _ = self.run_script([], {}, f)
         self.assertEqual(rc, 0)
@@ -282,7 +345,8 @@ class TestRun(unittest.TestCase):
 
     def test_no_new_versions_is_clean_noop(self):
         f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-                               "treningi": "1.6.7", "truwer": "1.0.5"})
+                               "treningi": "1.6.7", "truwer": "1.0.5",
+                               "arkmail": "1.12.2"})
         rc, out, _ = self.run_script(["--publish"], OIDC_ENV, f)
         self.assertEqual(rc, 0)
         self.assertIn("Brak nowych wersji", out)
@@ -292,7 +356,8 @@ class TestRun(unittest.TestCase):
 
     def test_publish_blocked_outside_actions(self):
         f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-                               "treningi": "1.6.7", "truwer": "1.0.4"})
+                               "treningi": "1.6.7", "truwer": "1.0.4",
+                               "arkmail": "1.12.2"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5"))
         rc, _, err = self.run_script(["--publish"], {}, f)
         self.assertEqual(rc, 1)
@@ -301,7 +366,8 @@ class TestRun(unittest.TestCase):
 
     def test_full_publish_flow(self):
         f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-                               "treningi": "1.6.7", "truwer": "1.0.4"})
+                               "treningi": "1.6.7", "truwer": "1.0.4",
+                               "arkmail": "1.12.2"})
         zip_data = make_zip("truwer", "1.0.5")
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), zip_data)
         f.add(OIDC_FULL_URL, json.dumps({"value": "tok-123"}))
@@ -322,7 +388,8 @@ class TestRun(unittest.TestCase):
 
     def test_custom_changelog(self):
         f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-                               "treningi": "1.6.7", "truwer": "1.0.4"})
+                               "treningi": "1.6.7", "truwer": "1.0.4",
+                               "arkmail": "1.12.2"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5"))
         f.add(OIDC_FULL_URL, json.dumps({"value": "tok-123"}))
         f.add(P.REGISTRY + "/api/v1/plugins/truwer", json.dumps({"plugin": {"latestVersion": "1.0.5"}}))
@@ -332,7 +399,8 @@ class TestRun(unittest.TestCase):
 
     def test_guard_failure_aborts_before_any_post(self):
         f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-                               "treningi": "1.6.7", "truwer": "1.0.4"})
+                               "treningi": "1.6.7", "truwer": "1.0.4",
+                               "arkmail": "1.12.2"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5", ts_ver="1.0.4"))
         rc, _, err = self.run_script(["--publish"], OIDC_ENV, f)
         self.assertEqual(rc, 1)
@@ -340,7 +408,8 @@ class TestRun(unittest.TestCase):
 
     def test_registry_verify_after_publish_must_match(self):
         f = make_flow_fetcher({"imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-                               "treningi": "1.6.7", "truwer": "1.0.4"})
+                               "treningi": "1.6.7", "truwer": "1.0.4",
+                               "arkmail": "1.12.2"})
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_5.zip"), make_zip("truwer", "1.0.5"))
         f.add(OIDC_FULL_URL, json.dumps({"value": "tok-123"}))
         # katalog po publikacji nadal pokazuje stara wersje -> blad
@@ -354,9 +423,10 @@ class TestRun(unittest.TestCase):
         # musi miec swiezy token (zweryfikowane w boju: run 34169691714)
         f = FakeFetcher()
         f.add(P.PAGES_INDEX, json.dumps(index_doc(ishtar_ver="1.8.23", truwer_ver="1.0.6")))
+        f.add(P.ARKMAIL_PAGES_INDEX, json.dumps(arkmail_index_doc()))
         f.add(LIST_URL_ALL, json.dumps(registry_doc({
             "imperium-cal": "1.8.23", "ishtar-cal": "1.8.22",
-            "treningi": "1.6.7", "truwer": "1.0.5"})))
+            "treningi": "1.6.7", "truwer": "1.0.5", "arkmail": "1.12.2"})))
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="ishtar_cal_1_8_23.zip"), make_zip("ishtar_cal", "1.8.23"))
         f.add(P.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_6.zip"), make_zip("truwer", "1.0.6"))
         f.add(OIDC_FULL_URL, json.dumps({"value": "tok-1"}), json.dumps({"value": "tok-2"}))
@@ -379,6 +449,20 @@ class TestRun(unittest.TestCase):
         urls = [u for u, _ in f.gets]
         self.assertIn(P.REGISTRY + "/api/v1/plugins?slugs=truwer", urls)
         self.assertNotIn(LIST_URL_ALL, urls)
+        self.assertNotIn(P.ARKMAIL_PAGES_INDEX, urls,
+                         "bez arkmail w wyborze nie pobieramy jego indexu")
+
+    def test_selected_arkmail_fetches_only_arkmail_index(self):
+        f = FakeFetcher()
+        f.add(P.ARKMAIL_PAGES_INDEX, json.dumps(arkmail_index_doc()))
+        f.add(P.REGISTRY + "/api/v1/plugins?slugs=arkmail",
+              json.dumps(registry_doc({"arkmail": "1.12.2"})))
+        rc, out, _ = self.run_script(["--plugin", "arkmail"], {}, f)
+        self.assertEqual(rc, 0)
+        urls = [u for u, _ in f.gets]
+        self.assertIn(P.ARKMAIL_PAGES_INDEX, urls)
+        self.assertNotIn(P.PAGES_INDEX, urls,
+                         "przy wyborze samego arkmail glowny index jest zbedny")
 
 
 if __name__ == "__main__":

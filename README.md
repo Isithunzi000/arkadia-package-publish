@@ -2,7 +2,7 @@
 
 Automatyczna publikacja pluginów Dargoth do katalogu [Dargoth Client Plugins](https://arkadia-package-repository.vercel.app) z użyciem GitHub Actions OIDC (trusted publisher).
 
-Obsługiwane pluginy (źródła i release'y: [arkadia-dargoth-plugins](https://github.com/Isithunzi000/arkadia-dargoth-plugins)):
+Obsługiwane pluginy (źródła i release'y: [arkadia-dargoth-plugins](https://github.com/Isithunzi000/arkadia-dargoth-plugins); ArkMail: [arkadia-dargoth-arkmail](https://github.com/Isithunzi000/arkadia-dargoth-arkmail)):
 
 | Plugin | Slug w katalogu |
 |---|---|
@@ -10,10 +10,11 @@ Obsługiwane pluginy (źródła i release'y: [arkadia-dargoth-plugins](https://g
 | Kalendarz Ishtar | `ishtar-cal` |
 | Treningi | `treningi` |
 | Truwer | `truwer` |
+| ArkMail | `arkmail` |
 
 ## Jak to działa
 
-1. Workflow pobiera `index.json` z GitHub Pages repo z pluginami (źródło prawdy o wydanych wersjach).
+1. Workflow pobiera `index.json` z GitHub Pages repo z pluginami (źródło prawdy o wydanych wersjach). ArkMail ma własne Pages i własny `index.json` w swoim repo — dla niego zip pochodzi z assetów GitHub Release (`releases/download/vX.Y.Z/...`), a nie z katalogu `releases/` repo plugins.
 2. Porównuje wersje z publicznym API katalogu (`/api/v1/plugins`).
 3. Publikuje wyłącznie wersje **ściśle nowsze** — powtórne uruchomienie bez nowego release'u jest no-op.
 4. Przed wysyłką guard wersji: wersja z nazwy zipa == `PLUGIN_VERSION` w `index.ts` == `metadata.version` w `plugin.json`.

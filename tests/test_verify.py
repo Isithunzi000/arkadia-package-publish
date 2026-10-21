@@ -406,3 +406,78 @@ class TestPendingPublication(unittest.TestCase):
         rc, out, _ = run_verify(["--plugin", "truwer"], f)
         self.assertEqual(rc, 1, out)
         self.assertIn("[FAIL] api", out)
+
+
+# ---------------------------------------------------------------------------
+# Plugin arkmail (5. plugin; osobne repo i Pages, zip z release assetow)
+# ---------------------------------------------------------------------------
+
+ARKMAIL_TS = 'const PLUGIN_VERSION = "1.12.2";\nexport async function init() {}\n'
+ARKMAIL_PJ = json.dumps({"name": "arkmail", "entryPoint": "index.ts",
+                         "version": "1.12.2",
+                         "metadata": {"name": "ArkMail", "version": "1.12.2",
+                                      "author": "Isithunzi000", "description": "d"}})
+OUR_ZIP_ARKMAIL = make_zip({"arkmail/index.ts": ARKMAIL_TS, "arkmail/plugin.json": ARKMAIL_PJ})
+REPACKED_ZIP_ARKMAIL = make_zip({"arkmail/index.ts": ARKMAIL_TS, "arkmail/plugin.json": ARKMAIL_PJ},
+                                compression=zipfile.ZIP_DEFLATED)
+BASE_BUNDLE_ARKMAIL = make_bundle(alias=r"^\/arkmail$", popup="arkmail|ArkMail",
+                                  menu="ArkMail", name="ArkMail", version="1.12.2")
+ARKMAIL_DETAIL = {
+    "plugin": {"slug": "arkmail", "latestVersion": "1.12.2", "trustedPublisher": True},
+    "versions": [{"version": "1.12.2",
+                  "sha256": hashlib.sha256(BASE_BUNDLE_ARKMAIL.encode("utf-8")).hexdigest(),
+                  "yanked": False,
+                  "hasSources": True, "provenance": {"repositoryId": V.EXPECTED_REPO_ID}}],
+    "install": {"packageUrl": V.REGISTRY + "/r/arkmail/1.12.2/package.zip"},
+}
+
+
+def make_arkmail_flow_fetcher():
+    """Pelna trasa audytu arkmail: jego Pages index, release asset, bundle z jego Pages."""
+    f = FakeFetcher()
+    f.add(V.ARKMAIL_PAGES_INDEX, json.dumps({"plugins": [
+        {"name": "arkmail", "zip": "arkmail_1_12_2.zip", "file": "arkmail.js"}]}))
+    f.add(V.REGISTRY + "/api/v1/plugins/arkmail", json.dumps(ARKMAIL_DETAIL))
+    f.add(V.zip_url("arkmail", "arkmail_1_12_2.zip", "1.12.2"), OUR_ZIP_ARKMAIL)
+    f.add(ARKMAIL_DETAIL["install"]["packageUrl"], REPACKED_ZIP_ARKMAIL, ZIP_HEADERS)
+    f.add(V.REGISTRY + "/r/arkmail/1.12.2/plugin.js", BASE_BUNDLE_ARKMAIL, JS_HEADERS)
+    f.add(V.bundle_url("arkmail"), BASE_BUNDLE_ARKMAIL, JS_HEADERS)
+    f.add(V.REGISTRY + "/r/arkmail/latest/plugin.js", BASE_BUNDLE_ARKMAIL, JS_HEADERS)
+    return f
+
+
+class TestArkmailVerify(unittest.TestCase):
+    def test_arkmail_in_verify_plugins_list(self):
+        self.assertIn(("arkmail", "arkmail"), V.PLUGINS)
+
+    def test_arkmail_zip_url_uses_release_asset(self):
+        self.assertEqual(
+            V.zip_url("arkmail", "arkmail_1_12_2.zip", "1.12.2"),
+            "https://github.com/Isithunzi000/arkadia-dargoth-arkmail"
+            "/releases/download/v1.12.2/arkmail_1_12_2.zip")
+        self.assertEqual(
+            V.zip_url("truwer", "truwer_1_0_6.zip", "1.0.6"),
+            V.RAW_ZIP_TEMPLATE.format(zip="truwer_1_0_6.zip"))
+
+    def test_arkmail_bundle_url_uses_own_pages(self):
+        self.assertEqual(
+            V.bundle_url("arkmail"),
+            "https://isithunzi000.github.io/arkadia-dargoth-arkmail/arkmail.js")
+        self.assertEqual(
+            V.bundle_url("truwer"),
+            V.PAGES_BUNDLE.format(name="truwer"))
+
+    def test_arkmail_flow_all_pass_readonly(self):
+        f = make_arkmail_flow_fetcher()
+        rc, out, _ = run_verify(["--plugin", "arkmail"], f)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("[OK] api", out)
+        self.assertIn("[OK] package", out)
+        self.assertIn("[OK] bundle", out)
+        self.assertIn("[OK] latest", out)
+        self.assertIn("[OK] naglowki", out)
+        self.assertEqual(f.posts, [], "verify nie wysyla zadnych POST-ow")
+        urls = [u for u, _ in f.gets]
+        self.assertIn(V.ARKMAIL_PAGES_INDEX, urls)
+        self.assertNotIn(V.PAGES_INDEX, urls,
+                         "przy wyborze samego arkmail glowny index jest zbedny")

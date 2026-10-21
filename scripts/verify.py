@@ -52,6 +52,15 @@ RAW_ZIP_TEMPLATE = (
     "https://raw.githubusercontent.com/Isithunzi000/arkadia-dargoth-plugins/main/releases/{zip}"
 )
 
+# ArkMail ma osobne repo i osobne Pages; zip lezy jako asset GitHub Release
+# (w arkadia-dargoth-plugins/releases go nie ma).
+ARKMAIL_PAGES_INDEX = "https://isithunzi000.github.io/arkadia-dargoth-arkmail/index.json"
+ARKMAIL_ZIP_TEMPLATE = (
+    "https://github.com/Isithunzi000/arkadia-dargoth-arkmail"
+    "/releases/download/v{version}/{zip}"
+)
+ARKMAIL_BUNDLE = "https://isithunzi000.github.io/arkadia-dargoth-arkmail/arkmail.js"
+
 # repositoryId przypiete przy pierwszej publikacji OIDC (anti-rename/anti-squat)
 EXPECTED_REPO_ID = "1360323352"
 # klient Dargoth laduje bundle cross-origin z tej domeny
@@ -63,7 +72,31 @@ PLUGINS = (
     ("ishtar_cal", "ishtar-cal"),
     ("treningi", "treningi"),
     ("truwer", "truwer"),
+    ("arkmail", "arkmail"),
 )
+
+# Zrodla per plugin (domyslnie glowne Pages / releases repo plugins).
+INDEX_URLS = {
+    "arkmail": ARKMAIL_PAGES_INDEX,
+}
+BUNDLE_URLS = {
+    "arkmail": ARKMAIL_BUNDLE,
+}
+
+
+def index_url_for(slug):
+    return INDEX_URLS.get(slug, PAGES_INDEX)
+
+
+def zip_url(name, zip_name, version):
+    """Publiczny URL zipa wydania; arkmail z assetow GitHub Release."""
+    if name == "arkmail":
+        return ARKMAIL_ZIP_TEMPLATE.format(version=version, zip=zip_name)
+    return RAW_ZIP_TEMPLATE.format(zip=zip_name)
+
+
+def bundle_url(name):
+    return BUNDLE_URLS.get(name, PAGES_BUNDLE.format(name=name))
 
 ZIP_NAME_RX = re.compile(r"^([a-z0-9_]+)_(\d+)_(\d+)_(\d+)\.zip$")
 PROBE = Path(__file__).resolve().with_name("import_probe.mjs")
@@ -327,7 +360,7 @@ def verify_one(name, slug, index_entry, fetcher, out):
             report("latest", [f"odczyt przypietej wersji katalogu {catalog_latest}: {e}"])
     else:
         try:
-            our_zip = fetcher.get(RAW_ZIP_TEMPLATE.format(zip=zip_name)).body
+            our_zip = fetcher.get(zip_url(name, zip_name, version)).body
             pkg_resp = fetcher.get(package_url)
             report("package", compare_packages(our_zip, pkg_resp.body))
             declared = None
@@ -345,7 +378,7 @@ def verify_one(name, slug, index_entry, fetcher, out):
 
         try:
             reg_resp = fetcher.get(pinned_url, headers={"Origin": CLIENT_ORIGIN})
-            pages_resp = fetcher.get(PAGES_BUNDLE.format(name=name))
+            pages_resp = fetcher.get(bundle_url(name))
             with tempfile.TemporaryDirectory(prefix="verify-") as tmp:
                 reg_path = Path(tmp) / "registry.js"
                 pages_path = Path(tmp) / "pages.js"
@@ -405,16 +438,20 @@ def run(argv, env, fetcher, out, err):
                         choices=["all"] + [slug for _, slug in PLUGINS])
     args = parser.parse_args(argv)
 
-    try:
-        index = json.loads(fetcher.get(PAGES_INDEX).body.decode("utf-8"))
-    except (VerifyError, json.JSONDecodeError) as e:
-        print(f"BLAD: index.json na Pages: {e}", file=err)
-        return 1
-    by_name = {p.get("name"): p for p in index.get("plugins", [])}
-
     selected = PLUGINS if args.plugin == "all" else tuple(
         (n, s) for n, s in PLUGINS if s == args.plugin
     )
+
+    # Scal indexy tylko tych zrodel, ktore obejmuja wybrane pluginy
+    # (kolejnosc deterministyczna: pierwsze wystapienie w PLUGINS).
+    by_name = {}
+    for url in dict.fromkeys(index_url_for(s) for _, s in selected):
+        try:
+            index = json.loads(fetcher.get(url).body.decode("utf-8"))
+        except (VerifyError, json.JSONDecodeError) as e:
+            print(f"BLAD: index.json ({url}): {e}", file=err)
+            return 1
+        by_name.update({p.get("name"): p for p in index.get("plugins", [])})
     all_ok = True
     for name, slug in selected:
         entry = by_name.get(name)

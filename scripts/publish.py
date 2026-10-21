@@ -9,7 +9,7 @@ Prawdziwa publikacja mozliwa jest tylko w GitHub Actions (token OIDC);
 lokalnie skrypt dziala zawsze w trybie dry-run.
 
 Uzycie:
-  python3 scripts/publish.py [--plugin all|imperium-cal|ishtar-cal|truwer]
+  python3 scripts/publish.py [--plugin all|imperium-cal|ishtar-cal|treningi|truwer|arkmail]
                              [--publish] [--changelog "tekst"]
 """
 
@@ -32,13 +32,27 @@ RAW_ZIP_TEMPLATE = (
 )
 OIDC_AUDIENCE = "arkadia-plugins"
 
+# ArkMail ma osobne repo i osobne Pages; zip lezy jako asset GitHub Release
+# (w arkadia-dargoth-plugins/releases go nie ma).
+ARKMAIL_PAGES_INDEX = "https://isithunzi000.github.io/arkadia-dargoth-arkmail/index.json"
+ARKMAIL_ZIP_TEMPLATE = (
+    "https://github.com/Isithunzi000/arkadia-dargoth-arkmail"
+    "/releases/download/v{version}/{zip}"
+)
+
 # (nazwa w index.json, slug w katalogu) - kolejnosc determinuje kolejnosc publikacji
 PLUGINS = (
     ("imperium_cal", "imperium-cal"),
     ("ishtar_cal", "ishtar-cal"),
     ("treningi", "treningi"),
     ("truwer", "truwer"),
+    ("arkmail", "arkmail"),
 )
+
+# Zrodlo "co wydane" per slug (domyslnie glowny index Pages).
+INDEX_URLS = {
+    "arkmail": ARKMAIL_PAGES_INDEX,
+}
 
 VERSION_RX = re.compile(r"^\d+\.\d+\.\d+$")
 ZIP_NAME_RX = re.compile(r"^([a-z0-9_]+)_(\d+)_(\d+)_(\d+)\.zip$")
@@ -79,6 +93,17 @@ def parse_zip_name(zip_name):
     if not m:
         raise PublishError(f"nieparsowalna nazwa zipa: {zip_name!r}")
     return m.group(1), ".".join(m.group(2, 3, 4))
+
+
+def index_url_for(slug):
+    return INDEX_URLS.get(slug, PAGES_INDEX)
+
+
+def zip_url(name, zip_name, version):
+    """Publiczny URL zipa wydania; arkmail z assetow GitHub Release."""
+    if name == "arkmail":
+        return ARKMAIL_ZIP_TEMPLATE.format(version=version, zip=zip_name)
+    return RAW_ZIP_TEMPLATE.format(zip=zip_name)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +257,12 @@ def run(argv, env, fetcher, out, err):
         slugs = [slug for _, slug in PLUGINS if selected is None or slug in selected]
         list_url = f"{REGISTRY}/api/v1/plugins?slugs={','.join(slugs)}"
 
-        index_doc = json.loads(fetcher.get(PAGES_INDEX))
+        # Scal indexy tylko tych zrodel, ktore obejmuja wybrane pluginy
+        # (kolejnosc deterministyczna: pierwsze wystapienie w PLUGINS).
+        index_doc = {"plugins": []}
+        for url in dict.fromkeys(index_url_for(s) for s in slugs):
+            doc = json.loads(fetcher.get(url))
+            index_doc["plugins"].extend(doc.get("plugins", []))
         registry_doc = json.loads(fetcher.get(list_url))
         plan = build_plan(index_doc, registry_doc, selected)
 
@@ -248,7 +278,7 @@ def run(argv, env, fetcher, out, err):
         # Guard: pobierz i zweryfikuj kazdego kandydata zanim cokolwiek wyslemy
         guarded = []
         for p in to_publish:
-            data = fetcher.get(RAW_ZIP_TEMPLATE.format(zip=p.zip_name))
+            data = fetcher.get(zip_url(p.name, p.zip_name, p.version))
             version = guard_zip(p.zip_name, data)
             guarded.append((p, data, version))
             print(f"guard OK: {p.zip_name} (wersja {version})", file=out)

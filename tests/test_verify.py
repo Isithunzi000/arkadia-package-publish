@@ -186,6 +186,21 @@ class TestProbe(unittest.TestCase):
         self.assertEqual(fp["menus"], ["Truwer"])
         self.assertEqual(fp["triggers"], [])
 
+    def test_probe_popup_handle_chainable(self):
+        # Plugin realnie uzywa uchwytu z registerPersistentPopup (popup.onClose)
+        # - atrapia musi znosic laricuchowanie, inaczej init() rzuca TypeError.
+        bundle = "\n".join([
+            "export async function init(api) {",
+            '  const popup = await api.ui.registerPersistentPopup({id: "m", title: "M"});',
+            "  popup.onClose(() => {});",
+            '  return {name: "m", version: "1.0.0"};',
+            "}",
+        ]) + "\n"
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = V.run_probe(self.write_bundle(tmp, bundle))
+        self.assertEqual(fp["popups"], ["m|M"])
+
     def test_probe_broken_bundle_raises(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:

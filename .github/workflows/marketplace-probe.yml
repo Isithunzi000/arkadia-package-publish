@@ -1,0 +1,46 @@
+# .github/workflows/marketplace-probe.yml
+# Diagnostyczny odczyt marketplace: pobiera plugin.js + package.zip z
+# katalogu dla wskazanego sluga/wersji, liczy sha256 i odklada paczke
+# jako artefakt runu do niezaleznej weryfikacji poza runnerem.
+# Wylacznie reczne uruchomienie; zero POST-ow do katalogu.
+name: Marketplace probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: "Slug pluginu w katalogu"
+        required: true
+        default: "arkmail"
+      version:
+        description: "Wersja (np. 1.24.4) albo latest"
+        required: true
+        default: "latest"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pobierz plugin z katalogu
+        env:
+          REGISTRY: "https://arkadia-package-repository.vercel.app"
+          SLUG: ${{ inputs.slug }}
+          VER: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p probe
+          curl -fsSL "$REGISTRY/r/$SLUG/$VER/plugin.js" -o probe/plugin.js
+          curl -fsSL "$REGISTRY/r/$SLUG/$VER/package.zip" -o probe/package.zip
+          curl -fsSL "$REGISTRY/api/v1/plugins/$SLUG" -o probe/api.json
+          sha256sum probe/plugin.js probe/package.zip | tee probe/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marketplace-probe-${{ inputs.slug }}-${{ inputs.version }}
+          path: probe/
+          if-no-files-found: error

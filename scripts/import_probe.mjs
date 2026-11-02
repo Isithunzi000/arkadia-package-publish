@@ -66,7 +66,12 @@ function makeApi(path) {
     set() { return true; },
     apply(_t, _this, args) {
       calls.push({ path: path.join("."), args: args.map(serializeArg) });
-      return undefined; // await undefined jest bezpieczny
+      // Zwrot laricuchowalnego uchwytu: pluginy realnie uzywaja wynikow
+      // wywolan API (np. popup.onClose z registerPersistentPopup);
+      // undefined odcinaloby te sciezki TypeErrorem juz w init().
+      // Sciezki potomne maja suffiks "()", wiec filtry sladu
+      // (dokladne path) zostaja nietkniete.
+      return makeApi([...path, "()"]);
     },
   });
 }
